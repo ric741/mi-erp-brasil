@@ -49,7 +49,6 @@ def inicializar_bd():
     conn.commit()
     conn.close()
 
-# Inicializar la base de datos al arrancar
 inicializar_bd()
 
 def obtener_conexion():
@@ -91,7 +90,6 @@ if not st.session_state["autenticado"]:
 else:
     # --- MENÚ LATERAL (SALUDO, CERRAR SESIÓN Y FILTROS) ---
     st.sidebar.title(f"👤 Olá, {st.session_state['usuario'].capitalize()}")
-    st.sidebar.write(f"Nivel: {st.session_state['rol'].upper()}")
     
     if st.sidebar.button("🔒 Sair / Log Out"):
         st.session_state["autenticado"] = False
@@ -102,27 +100,67 @@ else:
     st.sidebar.markdown("---")
     st.sidebar.subheader("🎯 Filtros Generales")
     
-    # Cargar datos base para armar los filtros dinámicos
+    # Cargar datos base para los filtros
     df_ventas_base = cargar_datos("ventas")
     df_trabajadores_base = cargar_datos("trabajadores")
+    df_facturas_base = cargar_datos("facturas")
     
     # Filtro de Mes
     lista_meses = ["Todos"]
     if not df_ventas_base.empty:
-        lista_meses.extend(df_ventas_base["mes"].unique().tolist())
+        lista_meses.extend(sorted(df_ventas_base["mes"].unique().tolist(), reverse=True))
     mes_seleccionado = st.sidebar.selectbox("Filtrar por Mes:", lista_meses)
     
     # Filtro de Trabajador
     lista_trabajadores = ["Todos"]
     if not df_ventas_base.empty:
-        lista_trabajadores.extend(df_ventas_base["trabajador"].unique().tolist())
+        lista_trabajadores.extend(sorted(df_ventas_base["trabajador"].unique().tolist()))
     trabajador_seleccionado = st.sidebar.selectbox("Filtrar por Trabajador:", lista_trabajadores)
+
+    # Filtro de Producto / Servicio
+    lista_productos = ["Todos"]
+    if not df_ventas_base.empty:
+        lista_productos.extend(sorted(df_ventas_base["producto_servicio"].unique().tolist()))
+    producto_seleccionado = st.sidebar.selectbox("Filtrar por Producto/Servicio:", lista_productos)
+
+    # --- APLICAR FILTROS A LOS DATOS ---
+    df_v_filtrado = df_ventas_base.copy()
+    df_t_filtrado = df_trabajadores_base.copy()
+
+    if mes_seleccionado != "Todos":
+        df_v_filtrado = df_v_filtrado[df_v_filtrado["mes"] == mes_seleccionado]
+        df_t_filtrado = df_t_filtrado[df_t_filtrado["mes"] == mes_seleccionado]
+        
+    if trabajador_seleccionado != "Todos":
+        df_v_filtrado = df_v_filtrado[df_v_filtrado["trabajador"] == trabajador_seleccionado]
+        df_t_filtrado = df_t_filtrado[df_t_filtrado["trabajador"] == trabajador_seleccionado]
+
+    if producto_seleccionado != "Todos":
+        df_v_filtrado = df_v_filtrado[df_v_filtrado["producto_servicio"] == producto_seleccionado]
+        df_t_filtrado = df_t_filtrado[df_t_filtrado["producto_vendido"] == producto_seleccionado]
 
     # --- CONTENIDO PRINCIPAL ---
     st.title("📊 Sistema de Gestión - ERP Brasil")
     
+    # --- RESUMEN DE TOTALES (A PRIMERA HORA) ---
+    st.subheader("💰 Resumen Financiero General")
+    
+    total_ventas = df_v_filtrado["total"].sum() if not df_v_filtrado.empty else 0.0
+    total_facturas = df_facturas_base["monto"].sum() if not df_facturas_base.empty else 0.0
+    saldo_restante = total_ventas - total_facturas
+
+    col_v, col_f, col_s = st.columns(3)
+    with col_v:
+        st.metric(label="Total de Ventas", value=f"R$ {total_ventas:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    with col_f:
+        st.metric(label="Total a Pagar (Facturas)", value=f"R$ {total_facturas:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."), delta_color="inverse")
+    with col_s:
+        # Muestra en verde si es positivo, en rojo si es negativo
+        st.metric(label="Valor Total Restante (Saldo)", value=f"R$ {saldo_restante:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+
+    st.markdown("---")
+
     # --- SECCIÓN AUTOMÁTICA DE ALERTAS DE FACTURAS ---
-    df_facturas_base = cargar_datos("facturas")
     if not df_facturas_base.empty:
         st.subheader("🔔 Alertas de Facturas")
         hoy = date.today()
@@ -136,7 +174,7 @@ else:
                 elif hoy <= fecha_venc <= limite_proximo:
                     st.warning(f"⚠️ **Factura próxima a vencer:** {fila['concepto']} por R$ {fila['monto']:.2f} (Vence el {fila['fecha_vencimiento']})")
             except ValueError:
-                pass # Ignorar si el formato de fecha está corrupto
+                pass
 
     # Pestañas de la aplicación
     tab_ventas, tab_trabajadores, tab_facturas = st.tabs(["💰 Ventas", "👥 Trabajadores", "📄 Facturas"])
@@ -155,7 +193,7 @@ else:
                     f_producto = st.text_input("Producto o Servicio")
                     f_cantidad = st.number_input("Cantidad", min_value=1, value=1, step=1)
                 with col3:
-                    f_precio = st.number_input("Precio Unitario", min_value=0.0, value=0.0, step=10.0)
+                    f_precio = st.number_input("Precio Unitario (R$)", min_value=0.0, value=0.0, step=10.0)
                 
                 enviar_venta = st.form_submit_button("Guardar Venta")
                 
@@ -178,13 +216,7 @@ else:
                         st.error("⚠️ Por favor rellena todos los campos.")
         
         st.subheader("Historial de Ventas")
-        df_v = df_ventas_base.copy()
-        if mes_seleccionado != "Todos":
-            df_v = df_v[df_v["mes"] == mes_seleccionado]
-        if trabajador_seleccionado != "Todos":
-            df_v = df_v[df_v["trabajador"] == trabajador_seleccionado]
-            
-        st.dataframe(df_v, use_container_width=True)
+        st.dataframe(df_v_filtrado, use_container_width=True)
 
     # --- SECCIÓN DE TRABAJADORES ---
     with tab_trabajadores:
@@ -198,7 +230,7 @@ else:
                     t_producto = st.text_input("Producto/Servicio Vendido")
                 with col2:
                     t_cantidad = st.number_input("Cantidad Vendida", min_value=1, value=1, step=1)
-                    t_valor = st.number_input("Pago por Unidad", min_value=0.0, value=0.0, step=5.0)
+                    t_valor = st.number_input("Pago por Unidad (R$)", min_value=0.0, value=0.0, step=5.0)
                 
                 enviar_trabajador = st.form_submit_button("Guardar Registro")
                 
@@ -221,13 +253,7 @@ else:
                         st.error("⚠️ Por favor rellena todos los campos.")
 
         st.subheader("Historial de Pagos")
-        df_t = df_trabajadores_base.copy()
-        if mes_seleccionado != "Todos":
-            df_t = df_t[df_t["mes"] == mes_seleccionado]
-        if trabajador_seleccionado != "Todos":
-            df_t = df_t[df_t["trabajador"] == trabajador_seleccionado]
-            
-        st.dataframe(df_t, use_container_width=True)
+        st.dataframe(df_t_filtrado, use_container_width=True)
 
     # --- SECCIÓN DE FACTURAS ---
     with tab_facturas:
@@ -239,7 +265,7 @@ else:
                 with col1:
                     fac_concepto = st.text_input("Concepto (Ej: Luz, Internet, Renta)")
                 with col2:
-                    fac_monto = st.number_input("Monto de la Factura", min_value=0.0, value=0.0, step=10.0)
+                    fac_monto = st.number_input("Monto de la Factura (R$)", min_value=0.0, value=0.0, step=10.0)
                     fac_vencimiento = st.date_input("Fecha de Vencimiento", date.today())
                 
                 enviar_factura = st.form_submit_button("Guardar Factura")
