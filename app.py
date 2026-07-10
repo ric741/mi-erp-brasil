@@ -60,13 +60,6 @@ def cargar_datos(tabla_name):
     conn.close()
     return df
 
-def eliminar_registro(tabla_name, registro_id):
-    conn = obtener_conexion()
-    cursor = conn.cursor()
-    cursor.execute(f"DELETE FROM {tabla_name} WHERE id = ?", (registro_id,))
-    conn.commit()
-    conn.close()
-
 # 3. CONTROL DE ACCESO (LOGIN)
 if "autenticado" not in st.session_state:
     st.session_state["autenticado"] = False
@@ -93,7 +86,7 @@ if not st.session_state["autenticado"]:
         else:
             st.error("❌ Usuário ou senha incorretos.")
 
-# --- PANTALLA PRINCIPAL DEL ERP ---
+# --- PANTALLA PRINCIPAL ---
 else:
     # --- MENÚ LATERAL ---
     st.sidebar.title(f"👤 Olá, {st.session_state['usuario'].capitalize()}")
@@ -126,7 +119,7 @@ else:
         lista_productos.extend(sorted(df_ventas_base["producto_servicio"].unique().tolist()))
     producto_seleccionado = st.sidebar.selectbox("Filtrar por Producto/Servicio:", lista_productos)
 
-    # Filtrado lógico
+    # Filtrado lógico para el cuadro de mandos
     df_v_filtrado = df_ventas_base.copy()
     df_t_filtrado = df_trabajadores_base.copy()
 
@@ -159,25 +152,10 @@ else:
 
     st.markdown("---")
 
-    # --- ALERTAS DE FACTURAS ---
-    if not df_facturas_base.empty:
-        st.subheader("🔔 Alertas de Facturas")
-        hoy = date.today()
-        limite_proximo = hoy + timedelta(days=7)
-        for _, fila in df_facturas_base.iterrows():
-            try:
-                fecha_venc = datetime.strptime(fila["fecha_vencimiento"], "%Y-%m-%d").date()
-                if fecha_venc < hoy:
-                    st.error(f"🚨 **¡FACTURA VENCIDA!** {fila['concepto']} por R$ {fila['monto']:.2f} (Venció el {fila['fecha_vencimiento']})")
-                elif hoy <= fecha_venc <= limite_proximo:
-                    st.warning(f"⚠️ **Factura próxima a vencer:** {fila['concepto']} por R$ {fila['monto']:.2f} (Vence el {fila['fecha_vencimiento']})")
-            except ValueError:
-                pass
-
     # Pestañas principales
     tab_ventas, tab_trabajadores, tab_facturas = st.tabs(["💰 Ventas", "👥 Trabajadores", "📄 Facturas"])
     
-    # --- VENTAS ---
+    # --- TAB VENTAS (TABLA ESTILO EXCEL) ---
     with tab_ventas:
         st.header("Gestión de Ventas")
         with st.expander("➕ Registrar Nueva Venta"):
@@ -205,54 +183,65 @@ else:
                     st.success("✅ Venta registrada!")
                     st.rerun()
 
-        st.subheader("Historial de Ventas")
+        st.subheader("📝 Historial Editable de Ventas")
         if not df_v_filtrado.empty:
-            for idx, fila in df_v_filtrado.iterrows():
-                col_texto, col_edit, col_btn = st.columns([8, 1, 1])
-                with col_texto:
-                    st.write(f"📅 {fila['fecha']} | 👤 {fila['trabajador']} | 📦 {fila['producto_servicio']} | {fila['cantidad']}x | **R$ {fila['total']:.2f}**")
-                with col_edit:
-                    exp_edit_v = st.expander("✏️")
-                with col_btn:
-                    if st.button("🗑️", key=f"del_v_{fila['id']}"):
-                        eliminar_registro("ventas", fila["id"])
-                        st.rerun()
-                
-                # Desplegable interno para editar el registro actual
-                with exp_edit_v:
-                    with st.form(f"edit_form_v_{fila['id']}"):
-                        ev_fecha = st.date_input("Modificar Fecha", datetime.strptime(fila['fecha'], "%Y-%m-%d").date(), key=f"ef_{fila['id']}")
-                        ev_trab = st.text_input("Trabajador", fila['trabajador'], key=f"et_{fila['id']}")
-                        ev_prod = st.text_input("Producto", fila['producto_servicio'], key=f"ep_{fila['id']}")
-                        ev_cant = st.number_input("Cantidad", min_value=1, value=int(fila['cantidad']), key=f"ec_{fila['id']}")
-                        ev_prec = st.number_input("Precio (R$)", min_value=0.0, value=float(fila['precio']), key=f"epr_{fila['id']}")
-                        
-                        if st.form_submit_button("Actualizar Registro"):
-                            ev_mes = ev_fecha.strftime("%Y-%m")
-                            ev_total = ev_cant * ev_prec
-                            conn = obtener_conexion()
-                            cursor = conn.cursor()
-                            cursor.execute("UPDATE ventas SET mes=?, fecha=?, producto_servicio=?, cantidad=?, precio=?, total=?, trabajador=? WHERE id=?",
-                                           (ev_mes, str(ev_fecha), ev_prod, ev_cant, ev_prec, ev_total, ev_trab, fila['id']))
-                            conn.commit()
-                            conn.close()
-                            st.success("¡Modificado!")
-                            st.rerun()
+            st.info("💡 Haz doble clic sobre cualquier celda para corregirla directamente. Al terminar, presiona el botón 'Guardar Cambios'.")
+            
+            # Tabla interactiva
+            ventas_editadas = st.data_editor(
+                df_v_filtrado,
+                column_config={
+                    "id": st.column_config.NumberColumn("ID", disabled=True),
+                    "mes": st.column_config.TextColumn("Mes", disabled=True),
+                    "fecha": st.column_config.TextColumn("Fecha (AAAA-MM-DD)"),
+                    "producto_servicio": st.column_config.TextColumn("Producto/Servicio"),
+                    "cantidad": st.column_config.NumberColumn("Cantidad", min_value=1),
+                    "precio": st.column_config.NumberColumn("Precio (R$)", format="R$ %.2f"),
+                    "total": st.column_config.NumberColumn("Total Calculado", disabled=True, format="R$ %.2f"),
+                    "trabajador": st.column_config.TextColumn("Trabajador")
+                },
+                num_rows="dynamic", # Permite borrar filas seleccionándolas y dándole a 'Supr' o Delete
+                hide_index=True,
+                key="editor_ventas"
+            )
+            
+            if st.button("💾 Guardar Cambios en Ventas"):
+                conn = obtener_conexion()
+                cursor = conn.cursor()
+                # Limpiar y reescribir con los datos modificados
+                for _, fila in ventas_editadas.iterrows():
+                    # Recalcular automáticamente el total de cada fila por si cambiaron cantidad o precio
+                    nuevo_total = int(fila['cantidad']) * float(fila['precio'])
+                    try:
+                        fecha_dt = datetime.strptime(str(fila['fecha']), "%Y-%m-%d")
+                        nuevo_mes = fecha_dt.strftime("%Y-%m")
+                    except:
+                        nuevo_mes = fila['mes']
+
+                    cursor.execute("""
+                        UPDATE ventas 
+                        SET mes=?, fecha=?, producto_servicio=?, cantidad=?, precio=?, total=?, trabajador=? 
+                        WHERE id=?
+                    """, (nuevo_mes, str(fila['fecha']), fila['producto_servicio'], int(fila['cantidad']), float(fila['precio']), nuevo_total, fila['trabajador'], int(fila['id'])))
+                conn.commit()
+                conn.close()
+                st.success("🎉 ¡Todos los cambios han sido guardados con éxito!")
+                st.rerun()
         else:
             st.info("No hay ventas registradas.")
 
-    # --- TRABAJADORES ---
+    # --- TAB TRABAJADORES (TABLA ESTILO EXCEL) ---
     with tab_trabajadores:
         st.header("Gestión de Trabajadores y Pagos")
         with st.expander("➕ Registrar Pago a Trabajador"):
             with st.form("form_trabajadores", clear_on_submit=True):
                 col1, col2 = st.columns(2)
                 with col1:
-                    t_nombre = st.text_input("Nombre del Trabajador", key="nt_nomb")
-                    t_producto = st.text_input("Producto/Servicio Vendido", key="nt_prod")
+                    t_nombre = st.text_input("Nombre del Trabajador")
+                    t_producto = st.text_input("Producto/Servicio Vendido")
                 with col2:
-                    t_cantidad = st.number_input("Cantidad Vendida", min_value=1, value=1, step=1, key="nt_cant")
-                    t_valor = st.number_input("Pago por Unidad (R$)", min_value=0.0, value=0.0, step=5.0, key="nt_val")
+                    t_cantidad = st.number_input("Cantidad Vendida", min_value=1, value=1, step=1)
+                    t_valor = st.number_input("Pago por Unidad (R$)", min_value=0.0, value=0.0, step=5.0)
                 
                 enviar_trabajador = st.form_submit_button("Guardar Registro")
                 if enviar_trabajador and t_nombre and t_producto:
@@ -260,57 +249,59 @@ else:
                     t_total = t_cantidad * t_valor
                     conn = obtener_conexion()
                     cursor = conn.cursor()
-                    cursor.execute("INSERT INTO trabajadores (mes, trabajador, producto_vendido, quantity, valor_pago, total_pago) VALUES (?, ?, ?, ?, ?, ?)", 
+                    cursor.execute("INSERT INTO trabajadores (mes, trabajador, producto_vendido, cantidad, valor_pago, total_pago) VALUES (?, ?, ?, ?, ?, ?)", 
                                    (t_mes, t_nombre, t_producto, t_cantidad, t_valor, t_total))
                     conn.commit()
                     conn.close()
                     st.success("✅ Pago registrado!")
                     st.rerun()
 
-        st.subheader("Historial de Pagos")
+        st.subheader("📝 Historial Editable de Pagos")
         if not df_t_filtrado.empty:
-            for idx, fila in df_t_filtrado.iterrows():
-                col_texto, col_edit, col_btn = st.columns([8, 1, 1])
-                with col_texto:
-                    st.write(f"👤 {fila['trabajador']} | 📦 {fila['producto_vendido']} | {fila['cantidad']} uds | **Pago: R$ {fila['total_pago']:.2f}**")
-                with col_edit:
-                    exp_edit_t = st.expander("✏️")
-                with col_btn:
-                    if st.button("🗑️", key=f"del_t_{fila['id']}"):
-                        eliminar_registro("trabajadores", fila["id"])
-                        st.rerun()
-                        
-                with exp_edit_t:
-                    with st.form(f"edit_form_t_{fila['id']}"):
-                        et_nomb = st.text_input("Trabajador", fila['trabajador'], key=f"etn_{fila['id']}")
-                        et_prod = st.text_input("Producto", fila['producto_vendido'], key=f"etp_{fila['id']}")
-                        et_cant = st.number_input("Cantidad", min_value=1, value=int(fila['cantidad']), key=f"etc_{fila['id']}")
-                        et_val = st.number_input("Valor (R$)", min_value=0.0, value=float(fila['valor_pago']), key=f"etv_{fila['id']}")
-                        
-                        if st.form_submit_button("Actualizar Registro"):
-                            et_total = et_cant * et_val
-                            conn = obtener_conexion()
-                            cursor = conn.cursor()
-                            cursor.execute("UPDATE trabajadores SET trabajador=?, producto_vendido=?, cantidad=?, valor_pago=?, total_pago=? WHERE id=?",
-                                           (et_nomb, et_prod, et_cant, et_val, et_total, fila['id']))
-                            conn.commit()
-                            conn.close()
-                            st.success("¡Modificado!")
-                            st.rerun()
+            pagos_editados = st.data_editor(
+                df_t_filtrado,
+                column_config={
+                    "id": st.column_config.NumberColumn("ID", disabled=True),
+                    "mes": st.column_config.TextColumn("Mes", disabled=True),
+                    "trabajador": st.column_config.TextColumn("Trabajador"),
+                    "producto_vendido": st.column_config.TextColumn("Producto Vendido"),
+                    "cantidad": st.column_config.NumberColumn("Cantidad"),
+                    "valor_pago": st.column_config.NumberColumn("Pago x Unidad", format="R$ %.2f"),
+                    "total_pago": st.column_config.NumberColumn("Total Pago", disabled=True, format="R$ %.2f")
+                },
+                num_rows="dynamic",
+                hide_index=True,
+                key="editor_trabajadores"
+            )
+            
+            if st.button("💾 Guardar Cambios en Pagos"):
+                conn = obtener_conexion()
+                cursor = conn.cursor()
+                for _, fila in pagos_editados.iterrows():
+                    nuevo_total_pago = int(fila['cantidad']) * float(fila['valor_pago'])
+                    cursor.execute("""
+                        UPDATE trabajadores 
+                        SET trabajador=?, producto_vendido=?, cantidad=?, valor_pago=?, total_pago=? 
+                        WHERE id=?
+                    """, (fila['trabajador'], fila['producto_vendido'], int(fila['cantidad']), float(fila['valor_pago']), nuevo_total_pago, int(fila['id'])))
+                conn.commit()
+                conn.close()
+                st.success("🎉 Pagos actualizados de inmediato!")
+                st.rerun()
         else:
             st.info("No hay pagos registrados.")
 
-    # --- FACTURAS ---
+    # --- TAB FACTURAS (TABLA ESTILO EXCEL) ---
     with tab_facturas:
         st.header("Gestión de Facturas por Pagar")
         with st.expander("➕ Agregar Nueva Factura"):
             with st.form("form_facturas", clear_on_submit=True):
                 col1, col2 = st.columns(2)
                 with col1:
-                    fac_concepto = st.text_input("Concepto (Ej: Luz, Internet, Renta)", key="nf_con")
+                    fac_concepto = st.text_input("Concepto (Ej: Luz, Internet, Renta)")
                 with col2:
-                    fac_monto = st.number_input("Monto de la Factura (R$)", min_value=0.0, value=0.0, step=10.0, key="nf_mon")
-                    fac_vencimiento = st.date_input("Fecha de Vencimiento", date.today(), key="nf_ven")
+                    fac_monto = st.number_input("Monto de la Factura (R$)", min_value=0.0, value=0.0, step=10.0)
+                    fac_vencimiento = st.date_input("Fecha de Vencimiento", date.today())
                 
                 enviar_factura = st.form_submit_button("Guardar Factura")
                 if enviar_factura and fac_concepto:
@@ -323,33 +314,33 @@ else:
                     st.success("✅ Factura guardada!")
                     st.rerun()
 
-        st.subheader("Lista de Facturas")
+        st.subheader("📝 Lista Editable de Facturas")
         if not df_facturas_base.empty:
-            for idx, fila in df_facturas_base.iterrows():
-                col_texto, col_edit, col_btn = st.columns([8, 1, 1])
-                with col_texto:
-                    st.write(f"📄 {fila['concepto']} | 💰 **R$ {fila['monto']:.2f}** | 📅 Vence: {fila['fecha_vencimiento']}")
-                with col_edit:
-                    exp_edit_f = st.expander("✏️")
-                with col_btn:
-                    if st.button("🗑️", key=f"del_f_{fila['id']}"):
-                        eliminar_registro("facturas", fila["id"])
-                        st.rerun()
-                        
-                with exp_edit_f:
-                    with st.form(f"edit_form_f_{fila['id']}"):
-                        ef_con = st.text_input("Concepto", fila['concepto'], key=f"efc_{fila['id']}")
-                        ef_mon = st.number_input("Monto (R$)", min_value=0.0, value=float(fila['monto']), key=f"efm_{fila['id']}")
-                        ef_ven = st.date_input("Vencimiento", datetime.strptime(fila['fecha_vencimiento'], "%Y-%m-%d").date(), key=f"efv_{fila['id']}")
-                        
-                        if st.form_submit_button("Actualizar Registro"):
-                            conn = obtener_conexion()
-                            cursor = conn.cursor()
-                            cursor.execute("UPDATE facturas SET concepto=?, monto=?, fecha_vencimiento=? WHERE id=?",
-                                           (ef_con, ef_mon, str(ef_ven), fila['id']))
-                            conn.commit()
-                            conn.close()
-                            st.success("¡Modificado!")
-                            st.rerun()
+            facturas_editadas = st.data_editor(
+                df_facturas_base,
+                column_config={
+                    "id": st.column_config.NumberColumn("ID", disabled=True),
+                    "concepto": st.column_config.TextColumn("Concepto de la Factura"),
+                    "monto": st.column_config.NumberColumn("Monto (R$)", format="R$ %.2f"),
+                    "fecha_vencimiento": st.column_config.TextColumn("Vencimiento (AAAA-MM-DD)")
+                },
+                num_rows="dynamic",
+                hide_index=True,
+                key="editor_facturas"
+            )
+            
+            if st.button("💾 Guardar Cambios en Facturas"):
+                conn = obtener_conexion()
+                cursor = conn.cursor()
+                for _, fila in facturas_editadas.iterrows():
+                    cursor.execute("""
+                        UPDATE facturas 
+                        SET concepto=?, monto=?, fecha_vencimiento=? 
+                        WHERE id=?
+                    """, (fila['concepto'], float(fila['monto']), str(fila['fecha_vencimiento']), int(fila['id'])))
+                conn.commit()
+                conn.close()
+                st.success("🎉 Lista de facturas corregida!")
+                st.rerun()
         else:
             st.info("No hay facturas registradas.")
