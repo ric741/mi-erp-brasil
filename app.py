@@ -26,10 +26,12 @@ def inicializar_bd():
     )
     """)
     
+    # Se añade la columna 'fecha' a la tabla de trabajadores
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS trabajadores (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         mes TEXT,
+        fecha TEXT,
         trabajador TEXT,
         producto_vendido TEXT,
         cantidad INTEGER,
@@ -46,6 +48,13 @@ def inicializar_bd():
         fecha_vencimiento TEXT
     )
     """)
+    
+    # Script de migración automática por si la tabla ya existía sin la columna 'fecha'
+    try:
+        cursor.execute("ALTER TABLE trabajadores ADD COLUMN fecha TEXT")
+    except sqlite3.OperationalError:
+        pass # La columna ya existe
+        
     conn.commit()
     conn.close()
 
@@ -119,7 +128,7 @@ else:
         lista_productos.extend(sorted(df_ventas_base["producto_servicio"].unique().tolist()))
     producto_seleccionado = st.sidebar.selectbox("Filtrar por Producto/Servicio:", lista_productos)
 
-    # Filtrado lógico para el cuadro de mandos
+    # Filtrado lógico
     df_v_filtrado = df_ventas_base.copy()
     df_t_filtrado = df_trabajadores_base.copy()
 
@@ -152,10 +161,26 @@ else:
 
     st.markdown("---")
 
+    # --- ALERTAS DE FACTURAS ---
+    if not df_facturas_base.empty:
+        st.subheader("🔔 Alertas de Facturas")
+        hoy = date.today()
+        limite_proximo = hoy + timedelta(days=7)
+        for _, fila in df_facturas_base.iterrows():
+            try:
+                fecha_venc = datetime.strptime(str(fila["fecha_vencimiento"]), "%Y-%m-%d").date()
+                if fecha_venc < hoy:
+                    st.error(f"🚨 **¡FACTURA VENCIDA!** {fila['concepto']} por R$ {fila['monto']:.2f} (Venció el {fila['fecha_vencimiento']})")
+                elif hoy <= fecha_venc <= limite_proximo:
+                    st.warning(f"⚠️ **Factura próxima a vencer:** {fila['concepto']} por R$ {fila['monto']:.2f} (Vence el {fila['fecha_vencimiento']})")
+            except ValueError:
+                pass
+        st.markdown("---")
+
     # Pestañas principales
     tab_ventas, tab_trabajadores, tab_facturas = st.tabs(["💰 Ventas", "👥 Trabajadores", "📄 Facturas"])
     
-    # --- TAB VENTAS (TABLA ESTILO EXCEL) ---
+    # --- TAB VENTAS ---
     with tab_ventas:
         st.header("Gestión de Ventas")
         with st.expander("➕ Registrar Nueva Venta"):
@@ -187,7 +212,6 @@ else:
         if not df_v_filtrado.empty:
             st.info("💡 Haz doble clic sobre cualquier celda para corregirla directamente. Al terminar, presiona el botón 'Guardar Cambios'.")
             
-            # Tabla interactiva
             ventas_editadas = st.data_editor(
                 df_v_filtrado,
                 column_config={
@@ -200,7 +224,7 @@ else:
                     "total": st.column_config.NumberColumn("Total Calculado", disabled=True, format="R$ %.2f"),
                     "trabajador": st.column_config.TextColumn("Trabajador")
                 },
-                num_rows="dynamic", # Permite borrar filas seleccionándolas y dándole a 'Supr' o Delete
+                num_rows="dynamic",
                 hide_index=True,
                 key="editor_ventas"
             )
@@ -208,9 +232,7 @@ else:
             if st.button("💾 Guardar Cambios en Ventas"):
                 conn = obtener_conexion()
                 cursor = conn.cursor()
-                # Limpiar y reescribir con los datos modificados
                 for _, fila in ventas_editadas.iterrows():
-                    # Recalcular automáticamente el total de cada fila por si cambiaron cantidad o precio
                     nuevo_total = int(fila['cantidad']) * float(fila['precio'])
                     try:
                         fecha_dt = datetime.strptime(str(fila['fecha']), "%Y-%m-%d")
@@ -230,27 +252,28 @@ else:
         else:
             st.info("No hay ventas registradas.")
 
-    # --- TAB TRABAJADORES (TABLA ESTILO EXCEL) ---
+    # --- TAB TRABAJADORES ---
     with tab_trabajadores:
         st.header("Gestión de Trabajadores y Pagos")
         with st.expander("➕ Registrar Pago a Trabajador"):
             with st.form("form_trabajadores", clear_on_submit=True):
                 col1, col2 = st.columns(2)
                 with col1:
+                    t_fecha = st.date_input("Fecha de Registro/Pago", date.today(), key="nt_fecha")
                     t_nombre = st.text_input("Nombre del Trabajador")
-                    t_producto = st.text_input("Producto/Servicio Vendido")
                 with col2:
+                    t_producto = st.text_input("Producto/Servicio Vendido")
                     t_cantidad = st.number_input("Cantidad Vendida", min_value=1, value=1, step=1)
                     t_valor = st.number_input("Pago por Unidad (R$)", min_value=0.0, value=0.0, step=5.0)
                 
                 enviar_trabajador = st.form_submit_button("Guardar Registro")
                 if enviar_trabajador and t_nombre and t_producto:
-                    t_mes = datetime.now().strftime("%Y-%m")
+                    t_mes = t_fecha.strftime("%Y-%m")
                     t_total = t_cantidad * t_valor
                     conn = obtener_conexion()
                     cursor = conn.cursor()
-                    cursor.execute("INSERT INTO trabajadores (mes, trabajador, producto_vendido, cantidad, valor_pago, total_pago) VALUES (?, ?, ?, ?, ?, ?)", 
-                                   (t_mes, t_nombre, t_producto, t_cantidad, t_valor, t_total))
+                    cursor.execute("INSERT INTO trabajadores (mes, fecha, trabajador, producto_vendido, cantidad, valor_pago, total_pago) VALUES (?, ?, ?, ?, ?, ?, ?)", 
+                                   (t_mes, str(t_fecha), t_nombre, t_producto, t_cantidad, t_valor, t_total))
                     conn.commit()
                     conn.close()
                     st.success("✅ Pago registrado!")
@@ -263,6 +286,7 @@ else:
                 column_config={
                     "id": st.column_config.NumberColumn("ID", disabled=True),
                     "mes": st.column_config.TextColumn("Mes", disabled=True),
+                    "fecha": st.column_config.TextColumn("Fecha (AAAA-MM-DD)"),
                     "trabajador": st.column_config.TextColumn("Trabajador"),
                     "producto_vendido": st.column_config.TextColumn("Producto Vendido"),
                     "cantidad": st.column_config.NumberColumn("Cantidad"),
@@ -279,19 +303,25 @@ else:
                 cursor = conn.cursor()
                 for _, fila in pagos_editados.iterrows():
                     nuevo_total_pago = int(fila['cantidad']) * float(fila['valor_pago'])
+                    try:
+                        fecha_dt = datetime.strptime(str(fila['fecha']), "%Y-%m-%d")
+                        nuevo_mes = fecha_dt.strftime("%Y-%m")
+                    except:
+                        nuevo_mes = fila['mes']
+                        
                     cursor.execute("""
                         UPDATE trabajadores 
-                        SET trabajador=?, producto_vendido=?, cantidad=?, valor_pago=?, total_pago=? 
+                        SET mes=?, fecha=?, trabajador=?, producto_vendido=?, cantidad=?, valor_pago=?, total_pago=? 
                         WHERE id=?
-                    """, (fila['trabajador'], fila['producto_vendido'], int(fila['cantidad']), float(fila['valor_pago']), nuevo_total_pago, int(fila['id'])))
+                    """, (nuevo_mes, str(fila['fecha']), fila['trabajador'], fila['producto_vendido'], int(fila['command'] if 'command' in fila else fila['cantidad']), float(fila['valor_pago']), nuevo_total_pago, int(fila['id'])))
                 conn.commit()
                 conn.close()
-                st.success("🎉 Pagos actualizados de inmediato!")
+                st.success("🎉 Pagos y fechas actualizados de inmediato!")
                 st.rerun()
         else:
             st.info("No hay pagos registrados.")
 
-    # --- TAB FACTURAS (TABLA ESTILO EXCEL) ---
+    # --- TAB FACTURAS ---
     with tab_facturas:
         st.header("Gestión de Facturas por Pagar")
         with st.expander("➕ Agregar Nueva Factura"):
