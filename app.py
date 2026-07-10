@@ -138,9 +138,24 @@ elif opcion_pantalla == "🛒 Vendas Mensales (Registrar y Editar)":
 
     st.divider()
     st.subheader("📋 Lista de Vendas (Filtrável e Editável)")
-    df_v_editada = st.data_editor(st.session_state.ventas_db, num_rows="dynamic", use_container_width=True, key="edit_v")
+    
+    # AQUÍ ESTÁ DE VUELTA TU FILTRADO:
+    buscar_producto = st.text_input("🔍 Buscar por Producto o Servicio (Escribe aquí):", "")
+    
+    # Si escribes algo, filtramos las filas antes de mostrarlas en el editor
+    if buscar_producto:
+        df_mostrar_v = st.session_state.ventas_db[st.session_state.ventas_db["Producto_Servicio"].str.contains(buscar_producto, case=False, na=False)]
+    else:
+        df_mostrar_v = st.session_state.ventas_db
+
+    df_v_editada = st.data_editor(df_mostrar_v, num_rows="dynamic", use_container_width=True, key="edit_v")
+    
     if st.button("💾 Guardar Cambios en Ventas"):
-        st.session_state.ventas_db = df_v_editada.copy()
+        if buscar_producto:
+            # Si estaba filtrado, actualizamos solo lo filtrado dentro de la base completa
+            st.session_state.ventas_db.update(df_v_editada)
+        else:
+            st.session_state.ventas_db = df_v_editada.copy()
         actualizar_tablas()
         st.success("¡Base de datos de ventas actualizada!")
         st.rerun()
@@ -210,4 +225,3 @@ elif opcion_pantalla == "🔔 Alertas de Facturas (Registrar y Control)":
         st.session_state.facturas_db = df_f_editada.copy()
         st.success("¡Base de datos de facturas actualizada!")
         st.rerun()
-
