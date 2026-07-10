@@ -73,12 +73,12 @@ if not st.session_state["autenticado"]:
     contrasena_input = st.text_input("Senha", type="password", key="login_pass")
     
     if st.button("Entrar"):
-        if usuario_input == "admin" and contrasena_input == "admin123":
+        if usuario_input == "admin" and contrasena_input == "admin2017":
             st.session_state["autenticado"] = True
             st.session_state["usuario"] = usuario_input
             st.session_state["rol"] = "admin"
             st.rerun()
-        elif usuario_input == "trabajador" and contrasena_input == "trabaja321":
+        elif usuario_input == "trabajador" and contrasena_input == "trabaja2017":
             st.session_state["autenticado"] = True
             st.session_state["usuario"] = usuario_input
             st.session_state["rol"] = "trabajador"
