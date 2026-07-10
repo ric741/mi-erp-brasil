@@ -1,19 +1,18 @@
 import streamlit as st
 import pandas as pd
 import sqlite3
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
-# 1. CONFIGURACIÓN DE LA PÁGINA (Debe ser lo primero)
-st.set_page_config(page_title="ERP Brasil Final", layout="wide")
+# 1. CONFIGURACIÓN DE LA PÁGINA
+st.set_page_config(page_title="ERP Brasil Profesional", layout="wide")
 
-# 2. CONEXIÓN Y CREACIÓN DE LA BASE DE DATOS (SQLite)
+# 2. CONEXIÓN Y FUNCIONES DE LA BASE DE DATOS
 DB_NAME = "erp_brasil.db"
 
 def inicializar_bd():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     
-    # Crear tabla de ventas
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS ventas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -27,7 +26,6 @@ def inicializar_bd():
     )
     """)
     
-    # Crear tabla de trabajadores
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS trabajadores (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,7 +38,6 @@ def inicializar_bd():
     )
     """)
     
-    # Crear tabla de facturas
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS facturas (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,40 +46,30 @@ def inicializar_bd():
         fecha_vencimiento TEXT
     )
     """)
-    
-    # Insertar datos de prueba si las tablas están vacías
-    cursor.execute("SELECT COUNT(*) FROM ventas")
-    if cursor.fetchone()[0] == 0:
-        cursor.execute("INSERT INTO ventas (mes, fecha, producto_servicio, cantidad, precio, total, trabajador) VALUES ('2026-07', '2026-07-01', 'Web Design', 2, 50.0, 100.0, 'Joao Silva')")
-        cursor.execute("INSERT INTO trabajadores (mes, trabajador, producto_vendido, cantidad, valor_pago, total_pago) VALUES ('2026-07', 'Joao Silva', 'Web Design', 2, 15.0, 30.0)")
-        cursor.execute("INSERT INTO facturas (concepto, monto, fecha_vencimiento) VALUES ('Conta de Luz', 40.0, '2026-07-15')")
-    
     conn.commit()
     conn.close()
 
-# Ejecutar la creación de la base de datos
+# Inicializar la base de datos al arrancar
 inicializar_bd()
 
-# Funciones de ayuda para la base de datos
 def obtener_conexion():
     return sqlite3.connect(DB_NAME)
 
 def cargar_datos(tabla_name):
     conn = obtener_conexion()
-    df = pd.read_sql_query(f"SELECT * FROM {tabla_name}", conn)
+    df = pd.read_sql_query(f"SELECT * FROM {tabla_name} ORDER BY id DESC", conn)
     conn.close()
     return df
 
-# 3. SISTEMA DE CONTROL DE ACCESO (LOGIN)
+# 3. CONTROL DE ACCESO (LOGIN)
 if "autenticado" not in st.session_state:
     st.session_state["autenticado"] = False
     st.session_state["usuario"] = ""
     st.session_state["rol"] = ""
 
-# --- CASO A: EL USUARIO NO ESTÁ LOGUEADO ---
+# --- PANTALLA DE LOGIN ---
 if not st.session_state["autenticado"]:
     st.title("🔑 Login - ERP Brasil")
-    
     usuario_input = st.text_input("Usuário", key="login_user")
     contrasena_input = st.text_input("Senha", type="password", key="login_pass")
     
@@ -100,39 +87,177 @@ if not st.session_state["autenticado"]:
         else:
             st.error("❌ Usuário ou senha incorretos.")
 
-# --- CASO B: EL USUARIO SÍ ESTÁ LOGUEADO ---
+# --- PANTALLA PRINCIPAL DEL ERP (LOGUEADO) ---
 else:
-    # Barra lateral con saludo y botón de salida corregido
+    # --- MENÚ LATERAL (SALUDO, CERRAR SESIÓN Y FILTROS) ---
     st.sidebar.title(f"👤 Olá, {st.session_state['usuario'].capitalize()}")
-    st.sidebar.write(f"Rol: {st.session_state['rol']}")
+    st.sidebar.write(f"Nivel: {st.session_state['rol'].upper()}")
     
     if st.sidebar.button("🔒 Sair / Log Out"):
         st.session_state["autenticado"] = False
         st.session_state["usuario"] = ""
         st.session_state["rol"] = ""
         st.rerun()
-
-    # Título principal de la aplicación
-    st.title("📊 Panel de Control - ERP Brasil")
-    st.write("Bienvenido al sistema de gestión de tu empresa.")
+        
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("🎯 Filtros Generales")
     
-    # Crear pestañas de navegación organizadas
+    # Cargar datos base para armar los filtros dinámicos
+    df_ventas_base = cargar_datos("ventas")
+    df_trabajadores_base = cargar_datos("trabajadores")
+    
+    # Filtro de Mes
+    lista_meses = ["Todos"]
+    if not df_ventas_base.empty:
+        lista_meses.extend(df_ventas_base["mes"].unique().tolist())
+    mes_seleccionado = st.sidebar.selectbox("Filtrar por Mes:", lista_meses)
+    
+    # Filtro de Trabajador
+    lista_trabajadores = ["Todos"]
+    if not df_ventas_base.empty:
+        lista_trabajadores.extend(df_ventas_base["trabajador"].unique().tolist())
+    trabajador_seleccionado = st.sidebar.selectbox("Filtrar por Trabajador:", lista_trabajadores)
+
+    # --- CONTENIDO PRINCIPAL ---
+    st.title("📊 Sistema de Gestión - ERP Brasil")
+    
+    # --- SECCIÓN AUTOMÁTICA DE ALERTAS DE FACTURAS ---
+    df_facturas_base = cargar_datos("facturas")
+    if not df_facturas_base.empty:
+        st.subheader("🔔 Alertas de Facturas")
+        hoy = date.today()
+        limite_proximo = hoy + timedelta(days=7)
+        
+        for _, fila in df_facturas_base.iterrows():
+            try:
+                fecha_venc = datetime.strptime(fila["fecha_vencimiento"], "%Y-%m-%d").date()
+                if fecha_venc < hoy:
+                    st.error(f"🚨 **¡FACTURA VENCIDA!** {fila['concepto']} por R$ {fila['monto']:.2f} (Venció el {fila['fecha_vencimiento']})")
+                elif hoy <= fecha_venc <= limite_proximo:
+                    st.warning(f"⚠️ **Factura próxima a vencer:** {fila['concepto']} por R$ {fila['monto']:.2f} (Vence el {fila['fecha_vencimiento']})")
+            except ValueError:
+                pass # Ignorar si el formato de fecha está corrupto
+
+    # Pestañas de la aplicación
     tab_ventas, tab_trabajadores, tab_facturas = st.tabs(["💰 Ventas", "👥 Trabajadores", "📄 Facturas"])
     
-    # Contenido de la pestaña de Ventas
+    # --- SECCIÓN DE VENTAS ---
     with tab_ventas:
-        st.header("Registro de Ventas")
-        df_ventas = cargar_datos("ventas")
-        st.dataframe(df_ventas, use_container_width=True)
+        st.header("Gestión de Ventas")
         
-    # Contenido de la pestaña de Trabajadores
+        with st.expander("➕ Registrar Nueva Venta"):
+            with st.form("form_ventas", clear_on_submit=True):
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    f_fecha = st.date_input("Fecha de Venta", date.today())
+                    f_trabajador = st.text_input("Nombre del Trabajador")
+                with col2:
+                    f_producto = st.text_input("Producto o Servicio")
+                    f_cantidad = st.number_input("Cantidad", min_value=1, value=1, step=1)
+                with col3:
+                    f_precio = st.number_input("Precio Unitario", min_value=0.0, value=0.0, step=10.0)
+                
+                enviar_venta = st.form_submit_button("Guardar Venta")
+                
+                if enviar_venta:
+                    if f_producto and f_trabajador:
+                        f_mes = f_fecha.strftime("%Y-%m")
+                        f_total = f_cantidad * f_precio
+                        
+                        conn = obtener_conexion()
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                            INSERT INTO ventas (mes, fecha, producto_servicio, cantidad, precio, total, trabajador)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """, (f_mes, str(f_fecha), f_producto, f_cantidad, f_precio, f_total, f_trabajador))
+                        conn.commit()
+                        conn.close()
+                        st.success("✅ Venta registrada con éxito!")
+                        st.rerun()
+                    else:
+                        st.error("⚠️ Por favor rellena todos los campos.")
+        
+        st.subheader("Historial de Ventas")
+        df_v = df_ventas_base.copy()
+        if mes_seleccionado != "Todos":
+            df_v = df_v[df_v["mes"] == mes_seleccionado]
+        if trabajador_seleccionado != "Todos":
+            df_v = df_v[df_v["trabajador"] == trabajador_seleccionado]
+            
+        st.dataframe(df_v, use_container_width=True)
+
+    # --- SECCIÓN DE TRABAJADORES ---
     with tab_trabajadores:
-        st.header("Control de Pagos a Trabajadores")
-        df_trabajadores = cargar_datos("trabajadores")
-        st.dataframe(df_trabajadores, use_container_width=True)
+        st.header("Gestión de Trabajadores y Pagos")
         
-    # Contenido de la pestaña de Facturas
+        with st.expander("➕ Registrar Pago a Trabajador"):
+            with st.form("form_trabajadores", clear_on_submit=True):
+                col1, col2 = st.columns(2)
+                with col1:
+                    t_nombre = st.text_input("Nombre del Trabajador")
+                    t_producto = st.text_input("Producto/Servicio Vendido")
+                with col2:
+                    t_cantidad = st.number_input("Cantidad Vendida", min_value=1, value=1, step=1)
+                    t_valor = st.number_input("Pago por Unidad", min_value=0.0, value=0.0, step=5.0)
+                
+                enviar_trabajador = st.form_submit_button("Guardar Registro")
+                
+                if enviar_trabajador:
+                    if t_nombre and t_producto:
+                        t_mes = datetime.now().strftime("%Y-%m")
+                        t_total = t_cantidad * t_valor
+                        
+                        conn = obtener_conexion()
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                            INSERT INTO trabajadores (mes, trabajador, producto_vendido, cantidad, valor_pago, total_pago)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                        """, (t_mes, t_nombre, t_producto, t_cantidad, t_valor, t_total))
+                        conn.commit()
+                        conn.close()
+                        st.success("✅ Pago registrado con éxito!")
+                        st.rerun()
+                    else:
+                        st.error("⚠️ Por favor rellena todos los campos.")
+
+        st.subheader("Historial de Pagos")
+        df_t = df_trabajadores_base.copy()
+        if mes_seleccionado != "Todos":
+            df_t = df_t[df_t["mes"] == mes_seleccionado]
+        if trabajador_seleccionado != "Todos":
+            df_t = df_t[df_t["trabajador"] == trabajador_seleccionado]
+            
+        st.dataframe(df_t, use_container_width=True)
+
+    # --- SECCIÓN DE FACTURAS ---
     with tab_facturas:
-        st.header("Cuentas y Facturas por Pagar")
-        df_facturas = cargar_datos("facturas")
-        st.dataframe(df_facturas, use_container_width=True)
+        st.header("Gestión de Facturas por Pagar")
+        
+        with st.expander("➕ Agregar Nueva Factura"):
+            with st.form("form_facturas", clear_on_submit=True):
+                col1, col2 = st.columns(2)
+                with col1:
+                    fac_concepto = st.text_input("Concepto (Ej: Luz, Internet, Renta)")
+                with col2:
+                    fac_monto = st.number_input("Monto de la Factura", min_value=0.0, value=0.0, step=10.0)
+                    fac_vencimiento = st.date_input("Fecha de Vencimiento", date.today())
+                
+                enviar_factura = st.form_submit_button("Guardar Factura")
+                
+                if enviar_factura:
+                    if fac_concepto:
+                        conn = obtener_conexion()
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                            INSERT INTO facturas (concepto, monto, fecha_vencimiento)
+                            VALUES (?, ?, ?)
+                        """, (fac_concepto, fac_monto, str(fac_vencimiento)))
+                        conn.commit()
+                        conn.close()
+                        st.success("✅ Factura guardada con éxito!")
+                        st.rerun()
+                    else:
+                        st.error("⚠️ El concepto de la factura no puede estar vacío.")
+
+        st.subheader("Lista de Facturas")
+        st.dataframe(df_facturas_base, use_container_width=True)
