@@ -49,23 +49,18 @@ opcion_pantalla = st.sidebar.radio("🖥️ Ir para a Tela:", [
 # ====================================================================
 if opcion_pantalla == "🏠 Início (Balanço Geral e Alertas)":
     st.title("🏠 Balanço Geral da Empresa")
-    
     meses_ordenados = ["2026-06", "2026-07", "2026-08"]
     saldo_anterior = 0.0
     resumen_meses = {}
-    
     actualizar_tablas() # Asegurar que los cálculos estén al día
     
     for m in meses_ordenados:
         v_mes = st.session_state.ventas_db[st.session_state.ventas_db["Mes"] == m]
         t_mes = st.session_state.trabajadores_db[st.session_state.trabajadores_db["Mes"] == m]
-        
         ingresos_ventas = v_mes["Total"].sum()
         pagos_trabajadores = t_mes["Total_Pago"].sum()
-        
         f_mes = st.session_state.facturas_db[st.session_state.facturas_db["Fecha_Vencimiento"].str.contains(m, na=False)]
         costo_facturas = f_mes["Monto"].sum()
-        
         gastos_totales = pagos_trabajadores + costo_facturas
         balance_mes = ingresos_ventas - gastos_totales
         saldo_final_acumulado = saldo_anterior + balance_mes
@@ -85,7 +80,6 @@ if opcion_pantalla == "🏠 Início (Balanço Geral e Alertas)":
     else:
         st.subheader(f"📈 Mês: {mes_seleccionado}")
         res = resumen_meses.get(mes_seleccionado, {"Saldo Anterior": 0.0, "Vendas": 0.0, "Gastos": 0.0, "Líquido": 0.0, "Caixa Acumulado": 0.0})
-        
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("💰 Saldo Anterior", f"R$ {res['Saldo Anterior']:.2f}")
         c2.metric("🛒 Vendas (+)", f"R$ {res['Vendas']:.2f}")
@@ -121,7 +115,6 @@ if opcion_pantalla == "🏠 Início (Balanço Geral e Alertas)":
 # ====================================================================
 elif opcion_pantalla == "🛒 Vendas Mensales (Registrar y Editar)":
     st.title("🛒 Registro de Vendas")
-    
     st.subheader("➕ Adicionar Nova Venda")
     col1, col2 = st.columns(2)
     with col1:
@@ -145,11 +138,7 @@ elif opcion_pantalla == "🛒 Vendas Mensales (Registrar y Editar)":
 
     st.divider()
     st.subheader("📋 Lista de Vendas (Filtrável e Editável)")
-    
-    buscar_producto = st.text_input("🔍 Buscar por Producto o Servicio (Escribe aquí):", "")
-    
     df_v_editada = st.data_editor(st.session_state.ventas_db, num_rows="dynamic", use_container_width=True, key="edit_v")
-    
     if st.button("💾 Guardar Cambios en Ventas"):
         st.session_state.ventas_db = df_v_editada.copy()
         actualizar_tablas()
@@ -161,7 +150,6 @@ elif opcion_pantalla == "🛒 Vendas Mensales (Registrar y Editar)":
 # ====================================================================
 elif opcion_pantalla == "👥 Gestión de Trabajadores":
     st.title("👥 Controle de Funcionários")
-    
     st.subheader("➕ Registrar Trabalho")
     c1, c2 = st.columns(2)
     with c1:
@@ -185,9 +173,7 @@ elif opcion_pantalla == "👥 Gestión de Trabajadores":
 
     st.divider()
     st.subheader("📋 Lista de Pagamentos (Filtrável e Editável)")
-    
     df_t_editada = st.data_editor(st.session_state.trabajadores_db, num_rows="dynamic", use_container_width=True, key="edit_t")
-    
     if st.button("💾 Guardar Cambios en Trabajadores"):
         st.session_state.trabajadores_db = df_t_editada.copy()
         actualizar_tablas()
@@ -199,7 +185,6 @@ elif opcion_pantalla == "👥 Gestión de Trabajadores":
 # ====================================================================
 elif opcion_pantalla == "🔔 Alertas de Facturas (Registrar y Control)":
     st.title("🔔 Controle de Faturas")
-    
     st.subheader("➕ Registrar Nova Fatura")
     f_col1, f_col2 = st.columns(2)
     with f_col1:
@@ -208,4 +193,21 @@ elif opcion_pantalla == "🔔 Alertas de Facturas (Registrar y Control)":
     with f_col2:
         f_fecha_venc_input = st.text_input("Data de Vencimento (AAAA-MM-DD)", value=str(date.today()))
         
-    if st.button("💾 Salvar Fatura"): st.success("Fatura salva com sucesso!")
+    if st.button("💾 Salvar Fatura"):
+        nueva_factura = pd.DataFrame([{
+            "Concepto": f_con,
+            "Monto": f_mon,
+            "Fecha_Vencimiento": f_fecha_venc_input
+        }])
+        st.session_state.facturas_db = pd.concat([st.session_state.facturas_db, nueva_factura], ignore_index=True)
+        st.success("Fatura salva com sucesso!")
+        st.rerun()
+
+    st.divider()
+    st.subheader("📋 Lista de Faturas Registradas")
+    df_f_editada = st.data_editor(st.session_state.facturas_db, num_rows="dynamic", use_container_width=True, key="edit_f")
+    if st.button("💾 Guardar Cambios en Faturas"):
+        st.session_state.facturas_db = df_f_editada.copy()
+        st.success("¡Base de datos de facturas actualizada!")
+        st.rerun()
+
