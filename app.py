@@ -209,4 +209,3 @@ elif opcion_pantalla == "🔔 Alertas de Facturas (Registrar y Control)":
         f_fecha_venc_input = st.text_input("Data de Vencimento (AAAA-MM-DD)", value=str(date.today()))
         
     if st.button("💾 Salvar Fatura"): st.success("Fatura salva com sucesso!")
-    
